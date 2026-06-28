@@ -1,0 +1,373 @@
+import Foundation
+import Combine
+import ServiceManagement
+import AppKit
+
+/// One point in the live head-drop chart.
+struct DeviationSample: Identifiable {
+    let id: Int
+    let t: Double      // seconds since the session started (chart x-axis)
+    let drop: Double
+}
+
+/// Central view-model. Wires the motion stream → upright analysis → alerts,
+/// tracks session stats, exposes everything the menu UI needs, and persists
+/// settings to UserDefaults.
+final class AppState: ObservableObject {
+
+    let motion = HeadphoneMotionService()
+    let analyzer = UprightAnalyzer()
+    let alerts = AlertManager()
+    let audio = AudioDeviceMonitor()
+    let history = HistoryStore()
+
+    private let defaults = UserDefaults.standard
+    private var cancellables = Set<AnyCancellable>()
+
+    // MARK: Live, observable state
+
+    @Published private(set) var isMonitoring = false
+    @Published private(set) var uprightState: UprightState = .unknown
+    @Published private(set) var livePitch: Double = 0
+    @Published private(set) var deviation: Double = 0
+    @Published private(set) var isCalibrated = false
+
+    @Published private(set) var launchAtLogin = false
+    @Published private(set) var loginItemError: String?
+
+    /// SF Symbol shown in the menu bar. Updated only when the glyph actually
+    /// changes, so `AppDelegate` can drive the status item without reacting to
+    /// the per-sample motion stream.
+    @Published private(set) var menuBarSymbolName = "figure.seated.side"
+
+    /// True while the popover panel is on screen. When false we skip all
+    /// UI-only publishing (live pitch, chart samples) so an idle session does
+    /// no SwiftUI work — detection and alerts keep running regardless.
+    @Published var popoverIsOpen = false {
+        didSet {
+            guard popoverIsOpen, popoverIsOpen != oldValue else { return }
+            // Start the live chart fresh each time the panel is opened.
+            recentSamples = []
+            sampleIndex = 0
+            lastChartTime = nil
+            sessionStartTime = nil
+        }
+    }
+
+    // MARK: Session stats
+    //
+    // These accumulate every sample for history, but are plain (non-published)
+    // so they don't churn SwiftUI while the panel is closed. While the panel is
+    // open, the live `livePitch` / `deviation` / `recentSamples` updates drive
+    // the refresh that repaints these tiles.
+
+    private(set) var goodSeconds: Double = 0
+    private(set) var badSeconds: Double = 0
+    private(set) var slouchEvents = 0
+    @Published private(set) var recentSamples: [DeviationSample] = []
+
+    private var lastSampleTime: Date?
+    private var lastChartTime: Date?
+    private var previousState: UprightState = .unknown
+    private var sampleIndex = 0
+    private var sessionStartTime: Date?
+    private let chartWindowSeconds: Double = 60
+
+    // MARK: Settings (persisted)
+
+    @Published var threshold: Double {
+        didSet { analyzer.thresholdDegrees = threshold; defaults.set(threshold, forKey: "threshold") }
+    }
+    @Published var holdSeconds: Double {
+        didSet { analyzer.holdSeconds = holdSeconds; defaults.set(holdSeconds, forKey: "holdSeconds") }
+    }
+    @Published var cooldown: Double {
+        didSet { alerts.cooldown = cooldown; defaults.set(cooldown, forKey: "cooldown") }
+    }
+    @Published var soundEnabled: Bool {
+        didSet { alerts.soundEnabled = soundEnabled; defaults.set(soundEnabled, forKey: "soundEnabled") }
+    }
+    @Published var soundName: String {
+        didSet { alerts.soundName = soundName; defaults.set(soundName, forKey: "soundName") }
+    }
+    @Published var voiceEnabled: Bool {
+        didSet { alerts.voiceEnabled = voiceEnabled; defaults.set(voiceEnabled, forKey: "voiceEnabled") }
+    }
+    @Published var notificationsEnabled: Bool {
+        didSet { alerts.notificationEnabled = notificationsEnabled; defaults.set(notificationsEnabled, forKey: "notificationsEnabled") }
+    }
+    @Published var invert: Bool {
+        didSet { analyzer.invert = invert; defaults.set(invert, forKey: "invert") }
+    }
+
+    init() {
+        defaults.register(defaults: [
+            "threshold": 15.0,
+            "holdSeconds": 3.0,
+            "cooldown": 20.0,
+            "soundEnabled": true,
+            "soundName": "Funk",
+            "voiceEnabled": false,
+            "notificationsEnabled": true,
+            "invert": false
+        ])
+
+        threshold = defaults.double(forKey: "threshold")
+        holdSeconds = defaults.double(forKey: "holdSeconds")
+        cooldown = defaults.double(forKey: "cooldown")
+        soundEnabled = defaults.bool(forKey: "soundEnabled")
+        soundName = defaults.string(forKey: "soundName") ?? "Funk"
+        voiceEnabled = defaults.bool(forKey: "voiceEnabled")
+        notificationsEnabled = defaults.bool(forKey: "notificationsEnabled")
+        invert = defaults.bool(forKey: "invert")
+
+        analyzer.thresholdDegrees = threshold
+        analyzer.holdSeconds = holdSeconds
+        analyzer.invert = invert
+        alerts.cooldown = cooldown
+        alerts.soundEnabled = soundEnabled
+        alerts.soundName = soundName
+        alerts.voiceEnabled = voiceEnabled
+        alerts.notificationEnabled = notificationsEnabled
+        alerts.requestNotificationAuthorization()
+
+        motion.onMotion = { [weak self] pitch in
+            self?.handle(pitch: pitch)
+        }
+
+        // Re-publish nested object changes (connection / audio route) to the UI.
+        motion.objectWillChange
+            .sink { [weak self] _ in self?.objectWillChange.send() }
+            .store(in: &cancellables)
+        audio.objectWillChange
+            .sink { [weak self] _ in self?.objectWillChange.send() }
+            .store(in: &cancellables)
+        history.objectWillChange
+            .sink { [weak self] _ in self?.objectWillChange.send() }
+            .store(in: &cancellables)
+
+        // Persist the in-progress session if the app quits mid-monitoring.
+        NotificationCenter.default.publisher(for: NSApplication.willTerminateNotification)
+            .sink { [weak self] _ in self?.flushSessionToHistory() }
+            .store(in: &cancellables)
+
+        refreshLoginItemStatus()
+        updateMenuBarSymbol()
+    }
+
+    // MARK: Intents
+
+    func startMonitoring() {
+        resetSession()
+        motion.start()
+        isMonitoring = true
+        updateMenuBarSymbol()
+    }
+
+    func stopMonitoring() {
+        flushSessionToHistory()
+        motion.stop()
+        isMonitoring = false
+        uprightState = .unknown
+        deviation = 0
+        updateMenuBarSymbol()
+    }
+
+    func calibrate() {
+        if analyzer.calibrate() {
+            isCalibrated = true
+            uprightState = .good
+            alerts.resetCooldown()
+            resetSession()
+            updateMenuBarSymbol()
+        }
+    }
+
+    func recalibrate() {
+        flushSessionToHistory()
+        analyzer.reset()
+        isCalibrated = false
+        uprightState = .unknown
+        deviation = 0
+        resetSession()
+        updateMenuBarSymbol()
+    }
+
+    func previewSound() {
+        alerts.previewSound()
+    }
+
+    // MARK: Launch at login
+
+    func refreshLoginItemStatus() {
+        launchAtLogin = (SMAppService.mainApp.status == .enabled)
+    }
+
+    func setLaunchAtLogin(_ enabled: Bool) {
+        do {
+            if enabled {
+                if SMAppService.mainApp.status != .enabled {
+                    try SMAppService.mainApp.register()
+                }
+            } else {
+                if SMAppService.mainApp.status == .enabled {
+                    try SMAppService.mainApp.unregister()
+                }
+            }
+            loginItemError = nil
+        } catch {
+            loginItemError = error.localizedDescription
+        }
+        refreshLoginItemStatus()
+    }
+
+    // MARK: Pipeline
+
+    /// Save the current session's accumulated time into today's history, then
+    /// zero the live counters so they can't be double-counted.
+    func flushSessionToHistory() {
+        let total = goodSeconds + badSeconds
+        guard total >= 5 else { return }   // ignore trivial/aborted sessions
+        history.record(good: goodSeconds, bad: badSeconds, slouches: slouchEvents, on: Date())
+        goodSeconds = 0
+        badSeconds = 0
+        slouchEvents = 0
+    }
+
+    private func resetSession() {
+        goodSeconds = 0
+        badSeconds = 0
+        slouchEvents = 0
+        recentSamples = []
+        sampleIndex = 0
+        lastSampleTime = nil
+        lastChartTime = nil
+        sessionStartTime = nil
+        previousState = .unknown
+    }
+
+    private func handle(pitch: Double) {
+        let now = Date()
+        guard isMonitoring else { return }
+
+        let state = analyzer.update(pitchDegrees: pitch, now: now)
+        let drop = analyzer.drop
+
+        // --- Always-on bookkeeping (cheap, no SwiftUI churn) -----------------
+        // `uprightState` is observed (it drives the menu-bar glyph), so only
+        // publish it when it actually transitions.
+        if state != uprightState { uprightState = state }
+
+        if isCalibrated {
+            // Time spent in good vs bad upright (ignore large gaps / stalls).
+            if let last = lastSampleTime {
+                let dt = now.timeIntervalSince(last)
+                if dt > 0, dt < 2 {
+                    if state == .bad { badSeconds += dt }
+                    else if state == .good { goodSeconds += dt }
+                }
+            }
+            lastSampleTime = now
+
+            if state == .bad, previousState != .bad { slouchEvents += 1 }
+        }
+        previousState = state
+
+        if state == .bad {
+            alerts.triggerSlouchAlert(deviation: drop, now: now)
+        }
+
+        // Keep the menu-bar glyph current (no-op unless the symbol changed).
+        updateMenuBarSymbol()
+
+        // --- UI-only publishing (skipped entirely while the panel is closed) -
+        guard popoverIsOpen else { return }
+
+        livePitch = pitch
+        deviation = drop
+
+        guard isCalibrated else { return }
+
+        // Downsample the chart to ~5 Hz to keep it light.
+        let chartDue = lastChartTime.map { now.timeIntervalSince($0) >= 0.2 } ?? true
+        if chartDue {
+            if sessionStartTime == nil { sessionStartTime = now }
+            let t = now.timeIntervalSince(sessionStartTime ?? now)
+            sampleIndex += 1
+            recentSamples.append(DeviationSample(id: sampleIndex, t: t, drop: max(0, drop)))
+            // Keep only the trailing time window so the chart scrolls cleanly.
+            let cutoff = t - chartWindowSeconds
+            while let first = recentSamples.first, first.t < cutoff {
+                recentSamples.removeFirst()
+            }
+            lastChartTime = now
+        }
+    }
+
+    /// Recompute the menu-bar SF Symbol; publishes only when it changes.
+    private func updateMenuBarSymbol() {
+        let name = menuBarSymbol
+        if name != menuBarSymbolName { menuBarSymbolName = name }
+    }
+
+    // MARK: Derived UI helpers
+
+    var connectionText: String {
+        if motion.hasData { return "AirPods connected" }
+        if audio.headphonesConnected {
+            return audio.deviceName.isEmpty ? "Headphones connected" : "\(audio.deviceName) connected"
+        }
+        if !motion.isAvailable { return "Headphone motion unavailable" }
+        return isMonitoring ? "Waiting for AirPods…" : "No AirPods detected"
+    }
+
+    var isConnected: Bool {
+        motion.hasData || audio.headphonesConnected
+    }
+
+    var statusHeadline: String {
+        if let err = motion.lastError { return err }
+        if !isMonitoring { return "Paused" }
+        if !isCalibrated { return "Sit upright, then Calibrate" }
+        switch uprightState {
+        case .good:    return "Good upright"
+        case .bad:     return "Slouching — straighten up"
+        case .unknown: return "Reading…"
+        }
+    }
+
+    /// 0…1 progress of how close the current drop is to the alert threshold.
+    var slouchFraction: Double {
+        guard threshold > 0 else { return 0 }
+        return min(1, max(0, deviation / threshold))
+    }
+
+    /// Fixed-width, sliding time window for the live chart's x-axis. Anchored at
+    /// 0 until the window fills, then it slides so the latest sample is at the
+    /// right edge and old points scroll off the left.
+    var chartXDomain: ClosedRange<Double> {
+        let last = recentSamples.last?.t ?? 0
+        if last <= chartWindowSeconds { return 0...chartWindowSeconds }
+        return (last - chartWindowSeconds)...last
+    }
+
+    var goodUprightPercent: Double {
+        let total = goodSeconds + badSeconds
+        return total > 0 ? (goodSeconds / total) * 100 : 100
+    }
+
+    var monitoredTimeString: String {
+        let total = Int(goodSeconds + badSeconds)
+        return String(format: "%d:%02d", total / 60, total % 60)
+    }
+
+    var menuBarSymbol: String {
+        guard isMonitoring else { return "figure.seated.side" }
+        if !isCalibrated { return "scope" }
+        switch uprightState {
+        case .good:    return "figure.stand"
+        case .bad:     return "exclamationmark.triangle.fill"
+        case .unknown: return "figure.seated.side"
+        }
+    }
+}
