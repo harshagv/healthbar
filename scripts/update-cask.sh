@@ -23,7 +23,8 @@ VERSION="${1:-$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' R
 URL="https://github.com/${REPO}/releases/download/v${VERSION}/Upright.zip"
 
 echo "› Fetching $URL"
-SHA="$(curl -fsSL "$URL" | shasum -a 256 | awk '{print $1}')"
+#SHA="$(curl -fsSL "$URL" | shasum -a 256 | awk '{print $1}')"
+SHA="$(gh release download "v${VERSION}" --repo "${REPO}" --pattern "Upright.zip" -O - | shasum -a 256 | awk '{print $1}')"
 if [ -z "$SHA" ]; then
   echo "✗ Could not compute sha256 — is the Upright.zip asset uploaded to release v${VERSION}?" >&2
   exit 1
