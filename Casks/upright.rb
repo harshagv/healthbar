@@ -1,6 +1,6 @@
 cask "upright" do
   version "0.1.1"
-  sha256 "d0533fdf8760ad4cd6ce370b3c47c007831dabf489351d693f2118744e5a4461"   # auto-set by scripts/update-cask.sh
+  sha256 "cecc4865a282ee884103353814d4962b174ac2d722b8b8c8d482d6af228e6962"   # auto-set by scripts/update-cask.sh
 
   url "https://github.com/harshagv/upright/releases/download/v#{version}/Upright.zip",
       verified: "github.com/harshagv/upright/"
