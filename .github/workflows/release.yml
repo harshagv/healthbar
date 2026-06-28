@@ -22,8 +22,16 @@ jobs:
       - name: Show toolchain
         run: swift --version && xcodebuild -version
 
-      - name: Generate app icon (best-effort)
-        run: swift scripts/make_icon.swift || echo "icon generation skipped"
+      - name: Ensure app icon
+        run: |
+          # Prefer the committed Resources/AppIcon.icns (generated from
+          # docs/icon.png). Only fall back to the SF-symbol generator if it's
+          # missing, so releases ship the real icon.
+          if [ -f Resources/AppIcon.icns ]; then
+            echo "Using committed Resources/AppIcon.icns ($(du -h Resources/AppIcon.icns | cut -f1))"
+          else
+            swift scripts/make_icon.swift || echo "icon generation skipped"
+          fi
 
       - name: Build the .app bundle
         run: |
@@ -33,11 +41,16 @@ jobs:
       - name: Package Upright.app into a zip
         id: package
         run: |
-          BIN_DIR="$(swift build -c release --disable-sandbox --show-bin-path)"
-          APP="$BIN_DIR/Upright.app"
-          if [ ! -d "$APP" ]; then
-            echo "::error::Upright.app not found at $APP"; exit 1
+          # Locate the assembled bundle directly instead of guessing the arch
+          # subfolder from `swift build --show-bin-path` (which can differ from
+          # where build.sh actually drops Upright.app).
+          APP="$(find .build -type d -name 'Upright.app' -print -quit)"
+          if [ -z "$APP" ] || [ ! -d "$APP" ]; then
+            echo "::error::Upright.app not found under .build"
+            find .build -maxdepth 4 -name '*.app' -print || true
+            exit 1
           fi
+          echo "Found app bundle: $APP"
           # ditto preserves the bundle's symlinks/metadata better than `zip`.
           ditto -c -k --sequesterRsrc --keepParent "$APP" "Upright.zip"
           SHA="$(shasum -a 256 Upright.zip | awk '{print $1}')"
