@@ -4,7 +4,7 @@
 
 # Upright
 
-**Fix your upright while you work — using the motion sensors in your AirPods.**
+**Fix your posture while you work — using the motion sensors in your AirPods.**
 
 [![macOS](https://img.shields.io/badge/macOS-14%2B-black?logo=apple&logoColor=white)](https://www.apple.com/macos/)
 [![Swift](https://img.shields.io/badge/Swift-5.9-orange?logo=swift&logoColor=white)](https://swift.org)
@@ -42,7 +42,7 @@ cd upright && make run
 ## Features
 
 - Reads head pitch via Apple's Core Motion — no extra hardware.
-- One-tap calibration of your upright baseline.
+- One-tap calibration of your upright posture baseline.
 - Nudges via in-ear sound, an optional spoken cue, and a macOS notification.
 - Live stats and a 7-day history chart.
 - Tunable sensitivity, hold time, cooldown, and alert sound.
@@ -64,7 +64,7 @@ cd upright && make run
 
 Modern AirPods expose a 9-axis IMU through `CMHeadphoneMotionManager` — the data
 behind Spatial Audio head tracking. Upright streams your head pitch, captures
-an upright baseline when you calibrate, filters the signal, and flags a slouch
+an upright posture baseline when you calibrate, filters the signal, and flags a slouch
 when your head stays dropped past your threshold for a few seconds. There's no
 API to buzz AirPods, so the nudge is an in-ear sound/voice cue.
 
