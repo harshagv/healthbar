@@ -136,6 +136,34 @@ git add Casks/upright.rb && git commit -m "Add upright cask" && git push -u orig
    brew upgrade --cask harshagv/tap/upright      # later releases
    ```
 
+### Cleaning up a mistaken or duplicate release
+
+If you've published a tag/release you want to redo (e.g. a stray `v0.1.2`),
+delete it everywhere, then re-cut the version you want so the workflow rebuilds
+the app from the current source:
+
+```bash
+# 1) remove the unwanted tag + its GitHub release (and uploaded assets)
+git push origin :refs/tags/v0.1.2     # delete the remote tag
+git tag -d v0.1.2                      # delete the local tag
+gh release delete v0.1.2 --yes        # delete the GitHub release
+
+# 2) re-cut the canonical version (rebuilds Upright.zip via the workflow)
+git tag -d v0.1.1 2>/dev/null; git push origin :refs/tags/v0.1.1 2>/dev/null
+gh release delete v0.1.1 --yes 2>/dev/null
+git tag v0.1.1 && git push origin v0.1.1
+gh release create v0.1.1 --title "Upright v0.1.1" --notes "Release notes here."
+```
+
+Re-tagging triggers the **Release** workflow; when it finishes, copy the new
+`sha256` from its **Summary** into `Casks/upright.rb` (step 4 above), push it to
+the tap, then refresh your install:
+
+```bash
+brew untap harshagv/tap        # drop the cached cask
+brew install --cask harshagv/tap/upright
+```
+
 To validate the cask before publishing, run `brew audit --cask Casks/upright.rb`
 and `brew install --cask Casks/upright.rb` from this repo once a release exists.
 
