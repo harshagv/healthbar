@@ -105,31 +105,30 @@ git add Casks/upright.rb && git commit -m "Add upright cask" && git push -u orig
 
 1. Bump the version in `Resources/Info.plist` (`CFBundleShortVersionString` and
    `CFBundleVersion`), then commit and push `main`.
-2. Tag and publish the release — this fires the **Release** workflow, which
-   builds `Upright.app`, zips it to `Upright.zip`, and uploads it to the release:
+2. Tag and push — this fires the **Release** workflow, which builds
+   `Upright.app`, zips it to `Upright.zip`, and **creates the GitHub release**
+   with that asset attached (no separate `gh release create` needed):
 
    ```bash
    git tag v0.1.1 && git push origin v0.1.1
-   gh release create v0.1.1 --title "Upright v0.1.1" --notes "Release notes here."
    ```
 
-3. Grab the artifact's checksum: open the workflow run's **Summary** (it prints
-   the `sha256`), or compute it from the uploaded asset:
+   Add release notes afterward with `gh release edit v0.1.1 --notes "…"`.
+
+3. Wait for the **Release** workflow to finish uploading `Upright.zip`, then sync
+   the cask. The helper script reads the version from `Info.plist`, downloads the
+   release asset, computes its `sha256`, rewrites `Casks/upright.rb`, commits
+   here, and pushes the tap — all in one command:
 
    ```bash
-   curl -sL https://github.com/harshagv/upright/releases/download/v0.1.1/Upright.zip | shasum -a 256
+   chmod +x scripts/update-cask.sh                          # first time only
+   TAP_DIR=~/Documents/homebrew-tap scripts/update-cask.sh
    ```
 
-4. Update `version` and `sha256` in `Casks/upright.rb`, commit here, then copy it
-   into the tap and push:
+   (Run it without `TAP_DIR` to update only the local cask. Pass an explicit
+   version as `scripts/update-cask.sh 0.1.1` to override `Info.plist`.)
 
-   ```bash
-   git commit -am "Cask: v0.1.1 + sha256" && git push          # this repo
-   cp Casks/upright.rb ../homebrew-tap/Casks/upright.rb
-   cd ../homebrew-tap && git commit -am "upright 0.1.1" && git push
-   ```
-
-5. Install or upgrade:
+4. Install or upgrade:
 
    ```bash
    brew install --cask harshagv/tap/upright      # first install
@@ -148,20 +147,21 @@ git push origin :refs/tags/v0.1.2     # delete the remote tag
 git tag -d v0.1.2                      # delete the local tag
 gh release delete v0.1.2 --yes        # delete the GitHub release
 
-# 2) re-cut the canonical version (rebuilds Upright.zip via the workflow)
+# 2) re-cut the canonical version — pushing the tag rebuilds Upright.zip AND
+#    recreates the release via the workflow (no gh release create needed)
 git tag -d v0.1.1 2>/dev/null; git push origin :refs/tags/v0.1.1 2>/dev/null
 gh release delete v0.1.1 --yes 2>/dev/null
 git tag v0.1.1 && git push origin v0.1.1
-gh release create v0.1.1 --title "Upright v0.1.1" --notes "Release notes here."
 ```
 
-Re-tagging triggers the **Release** workflow; when it finishes, copy the new
-`sha256` from its **Summary** into `Casks/upright.rb` (step 4 above), push it to
-the tap, then refresh your install:
+Re-tagging triggers the **Release** workflow; when it finishes, sync the cask
+with the helper script, then refresh your install. You can't `brew untap` a tap
+that has an installed cask, so refresh in place instead:
 
 ```bash
-brew untap harshagv/tap        # drop the cached cask
-brew install --cask harshagv/tap/upright
+TAP_DIR=~/Documents/homebrew-tap scripts/update-cask.sh   # recompute sha + push tap
+brew update                                                # pull the tap's new cask
+brew reinstall --cask harshagv/tap/upright                # force a clean reinstall
 ```
 
 To validate the cask before publishing, run `brew audit --cask Casks/upright.rb`
