@@ -1,5 +1,5 @@
 cask "upright" do
-  version "0.1.1"
+  version "0.1.2"
   sha256 "REPLACE_WITH_ZIP_SHA256"   # sha256 of Upright.zip (printed by the release workflow)
 
   url "https://github.com/harshagv/upright/releases/download/v#{version}/Upright.zip",
