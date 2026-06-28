@@ -55,9 +55,12 @@ scripts/make_icon.swift        # regenerates Resources/AppIcon.icns
 build.sh / Makefile            # assemble + sign the .app
 ```
 
-The Homebrew formula lives in the shared tap repo
+Upright is distributed as a Homebrew **cask** of a prebuilt app built by
+[`.github/workflows/release.yml`](.github/workflows/release.yml). The cask lives
+in the shared tap repo
 [`harshagv/homebrew-tap`](https://github.com/harshagv/homebrew-tap)
-(`Formula/upright.rb`).
+(`Casks/upright.rb`); a reference copy is in `Casks/upright.rb` here. See the
+README's "Releasing" section for the flow.
 
 Keep responsibilities separated: motion I/O in `HeadphoneMotionService`,
 detection logic in `UprightAnalyzer`, user-facing alerts in `AlertManager`, and

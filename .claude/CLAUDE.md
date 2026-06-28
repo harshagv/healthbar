@@ -85,21 +85,27 @@ ad-hoc), `build.sh` / `Makefile` (bundle assembly + signing).
 ## Distribution
 
 - Main repo: `harshagv/upright` (public, MIT).
-- Homebrew tap: shared repo `harshagv/homebrew-tap` → `Formula/upright.rb`
-  (builds from the tagged source tarball). The old single-project tap
-  `homebrew-upright` is deprecated.
-- Install: `brew install harshagv/tap/upright`
+- Distributed as a Homebrew **cask** of a prebuilt app. `.github/workflows/
+  release.yml` builds `Upright.app` on a macOS runner, zips it to `Upright.zip`,
+  and attaches it to the GitHub Release on every `v*` tag.
+- Homebrew tap: shared repo `harshagv/homebrew-tap` → `Casks/upright.rb`
+  (a reference copy lives at `Casks/upright.rb` here). End users need no Xcode.
+- Install: `brew install --cask harshagv/tap/upright`
 
 ### Cutting a release
 
 1. Bump `Resources/Info.plist` `CFBundleShortVersionString` (+ `CFBundleVersion`).
 2. Commit + push `main`.
-3. `git tag vX.Y.Z && git push origin vX.Y.Z` ; `gh release create vX.Y.Z`.
-4. `shasum -a 256` of
-   `https://github.com/harshagv/upright/archive/refs/tags/vX.Y.Z.tar.gz`.
-5. In `harshagv/homebrew-tap`, update `Formula/upright.rb` `url` +
-   `sha256`; push the tap.
-6. Verify with `brew install` / `brew upgrade harshagv/tap/upright`.
+3. `git tag vX.Y.Z && git push origin vX.Y.Z` ; `gh release create vX.Y.Z`
+   (the Release workflow builds + uploads `Upright.zip`).
+4. Read the `sha256` from the workflow run Summary (or `shasum -a 256` the
+   uploaded `Upright.zip`).
+5. Update `version` + `sha256` in `Casks/upright.rb`, then copy it into
+   `harshagv/homebrew-tap` `Casks/upright.rb` and push the tap.
+6. Verify with `brew install --cask` / `brew upgrade --cask harshagv/tap/upright`.
+
+Note: builds are ad-hoc signed (no Developer ID); Gatekeeper may warn on first
+launch — the cask caveats give the `xattr -dr com.apple.quarantine` fix.
 
 ## Testing
 

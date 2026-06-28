@@ -1,0 +1,65 @@
+name: Release
+
+# Builds a signed (ad-hoc) Upright.app on a macOS runner, zips it, and attaches
+# it to the GitHub Release. Triggered when you push a version tag (e.g. v0.1.1);
+# can also be run manually to produce a downloadable build artifact.
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write   # required to upload assets to the release
+
+jobs:
+  build:
+    runs-on: macos-14   # Apple Silicon, macOS 14 (Sonoma) — matches the app's min OS
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Show toolchain
+        run: swift --version && xcodebuild -version
+
+      - name: Generate app icon (best-effort)
+        run: swift scripts/make_icon.swift || echo "icon generation skipped"
+
+      - name: Build the .app bundle
+        run: |
+          chmod +x build.sh
+          ./build.sh release
+
+      - name: Package Upright.app into a zip
+        id: package
+        run: |
+          BIN_DIR="$(swift build -c release --disable-sandbox --show-bin-path)"
+          APP="$BIN_DIR/Upright.app"
+          if [ ! -d "$APP" ]; then
+            echo "::error::Upright.app not found at $APP"; exit 1
+          fi
+          # ditto preserves the bundle's symlinks/metadata better than `zip`.
+          ditto -c -k --sequesterRsrc --keepParent "$APP" "Upright.zip"
+          SHA="$(shasum -a 256 Upright.zip | awk '{print $1}')"
+          echo "sha256=$SHA" >> "$GITHUB_OUTPUT"
+          {
+            echo "### Upright release artifact"
+            echo ""
+            echo "- **File:** \`Upright.zip\`"
+            echo "- **sha256:** \`$SHA\`"
+            echo ""
+            echo "Update \`version\` + \`sha256\` in the tap's \`Casks/upright.rb\`."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload build artifact (every run)
+        uses: actions/upload-artifact@v4
+        with:
+          name: Upright-zip
+          path: Upright.zip
+
+      - name: Attach to GitHub Release (tag pushes only)
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: Upright.zip
+          fail_on_unmatched_files: true
