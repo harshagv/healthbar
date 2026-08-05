@@ -2,7 +2,7 @@
 
 <img src="docs/icon.png" width="110" alt="Upright" />
 
-# Upright
+# Healthbar
 
 **Fix your posture while you work — using the motion sensors in your AirPods.**
 
