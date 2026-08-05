@@ -14,7 +14,7 @@
 # Run it AFTER the Release workflow has finished uploading Upright.zip.
 set -euo pipefail
 
-REPO="harshagv/upright"
+REPO="harshagv/healthbar"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 CASK="Casks/upright.rb"

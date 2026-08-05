@@ -136,15 +136,20 @@ deferral asks whether the camera is busy — MiniMe never captures video.
 
 ## Distribution
 
-- Main repo: `harshagv/upright` (public, MIT). Only **Upright** is distributed;
-  MiniMe is personal-use and has no cask.
-- Distributed as a Homebrew **cask** of a prebuilt app.
-  `.github/workflows/release.yml` discovers apps from `apps/`, builds each on a
-  macOS runner via a matrix, zips to `<App>.zip`, and attaches to the GitHub
-  Release on tag pushes. Tag routing:
-  - `v1.2.3` → Upright only (legacy shape, keeps the cask flow working)
-  - `minime-v0.1.0` / `<app>-v*` → that app only
+- Main repo: `harshagv/healthbar` (MIT). **Currently private** — the Homebrew
+  cask and any release download only work for others once it is public.
+- `.github/workflows/release.yml` discovers apps from `apps/`, builds each on a
+  macOS runner via a matrix, and attaches two assets per app to the GitHub
+  Release on tag pushes:
+  - `<App>.zip` — stable filename; this is what the cask downloads
+  - `<App>.dmg` — drag-to-Applications installer built with `hdiutil`
+- Tag routing:
+  - `v1.2.3` → **every app**, published together on one release
+  - `minime-v0.1.0` / `<app>-v*` → that app alone
   - branch push, PR or manual run → every app, build only, nothing published
+- Matrix jobs append to the same release, which is what lets one `v*` tag put
+  every app's bundles on a single release page.
+- Only **Upright** has a Homebrew cask; MiniMe ships as a release download only.
 - Homebrew tap: shared repo `harshagv/homebrew-tap` → `Casks/upright.rb`
   (a reference copy lives at `Casks/upright.rb` here). End users need no Xcode.
 - Install: `brew install --cask harshagv/tap/upright`

@@ -1,16 +1,20 @@
 name: Build & Release
 
-# Builds every app in apps/ on a macOS runner, zips each bundle, and — for tag
-# pushes — attaches them to the GitHub Release.
+# Builds every app in apps/ on a macOS runner and, for tag pushes, attaches an
+# installable bundle for each to the GitHub Release.
 #
-# Apps are discovered from the apps/ directory, so adding a new app needs a
-# directory and a Package.swift target, not a change to this file.
+# Apps are discovered from the apps/ directory, so a new app needs a directory
+# and a Package.swift target — not a change to this file.
 #
 # Tag routing:
-#   v1.2.3           → Upright only (legacy; keeps the existing cask flow working)
-#   minime-v0.1.0    → MiniMe only
-#   <app>-v<version> → that app only, matched case-insensitively
+#   v1.2.3           → every app, published together in one release
+#   minime-v0.1.0    → that app alone (matched case-insensitively)
+#   <app>-v<version> → likewise
 #   push / PR / manual run → every app, build only, nothing published
+#
+# Each app ships twice:
+#   <App>.zip  — stable filename, this is what the Homebrew cask downloads
+#   <App>.dmg  — drag-to-Applications installer for people not using Homebrew
 on:
   push:
     branches: [main]
@@ -44,12 +48,13 @@ jobs:
           fi
           echo "Apps in repo:"; echo "$ALL" | sed 's/^/  /'
 
+          SELECTED="$ALL"
           if [ "${GITHUB_REF_TYPE:-}" = "tag" ]; then
             TAG="${GITHUB_REF_NAME}"
             case "$TAG" in
               v*)
-                # Legacy tag shape, from before the repo held more than one app.
-                SELECTED="Upright"
+                # A plain version tag releases the whole collection.
+                SELECTED="$ALL"
                 ;;
               *-v*)
                 PREFIX="${TAG%%-v*}"
@@ -65,11 +70,9 @@ jobs:
                 ;;
             esac
             echo "Tag $TAG selects: $SELECTED"
-          else
-            SELECTED="$ALL"
           fi
 
-          # Fail early on an app that build.sh could never package.
+          # Fail early on an app build.sh could never package.
           MISSING=""
           for app in $SELECTED; do
             [ -f "apps/$app/Resources/Info.plist" ] || MISSING="$MISSING $app"
@@ -112,11 +115,12 @@ jobs:
           chmod +x build.sh
           ./build.sh release "${{ matrix.app }}"
 
-      - name: Package ${{ matrix.app }}.app into a zip
+      - name: Package zip + dmg
         id: package
         run: |
           set -euo pipefail
           APP_NAME="${{ matrix.app }}"
+
           # Locate the assembled bundle rather than guessing the arch subfolder
           # from `swift build --show-bin-path`, which can differ from where
           # build.sh actually drops the bundle.
@@ -130,27 +134,47 @@ jobs:
 
           VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' \
             "apps/${APP_NAME}/Resources/Info.plist" 2>/dev/null || echo "unknown")"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
           # ditto preserves the bundle's symlinks/metadata better than `zip`.
+          # The cask downloads this exact filename, so it must stay stable.
           ditto -c -k --sequesterRsrc --keepParent "$APP" "${APP_NAME}.zip"
-          SHA="$(shasum -a 256 "${APP_NAME}.zip" | awk '{print $1}')"
-          echo "sha256=$SHA" >> "$GITHUB_OUTPUT"
+
+          # A drag-to-Applications disk image for people not using Homebrew.
+          STAGE="$(mktemp -d)/${APP_NAME}"
+          mkdir -p "$STAGE"
+          cp -R "$APP" "$STAGE/"
+          ln -s /Applications "$STAGE/Applications"
+          hdiutil create -volname "$APP_NAME" -srcfolder "$STAGE" \
+            -ov -format UDZO -quiet "${APP_NAME}.dmg"
+
+          ZIP_SHA="$(shasum -a 256 "${APP_NAME}.zip" | awk '{print $1}')"
+          DMG_SHA="$(shasum -a 256 "${APP_NAME}.dmg" | awk '{print $1}')"
+          echo "sha256=$ZIP_SHA" >> "$GITHUB_OUTPUT"
           {
             echo "### ${APP_NAME} ${VERSION}"
             echo ""
-            echo "- **File:** \`${APP_NAME}.zip\`"
-            echo "- **sha256:** \`${SHA}\`"
+            echo "| Asset | sha256 |"
+            echo "| --- | --- |"
+            echo "| \`${APP_NAME}.zip\` | \`${ZIP_SHA}\` |"
+            echo "| \`${APP_NAME}.dmg\` | \`${DMG_SHA}\` |"
           } >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Upload build artifact (every run)
+      - name: Upload build artifacts (every run)
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.app }}-zip
-          path: ${{ matrix.app }}.zip
+          name: ${{ matrix.app }}-bundles
+          path: |
+            ${{ matrix.app }}.zip
+            ${{ matrix.app }}.dmg
 
       - name: Attach to GitHub Release (tag pushes only)
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
-          files: ${{ matrix.app }}.zip
+          # Matrix jobs append to the same release, so a `v*` tag ends up with
+          # every app's bundles on a single release page.
+          files: |
+            ${{ matrix.app }}.zip
+            ${{ matrix.app }}.dmg
           fail_on_unmatched_files: true

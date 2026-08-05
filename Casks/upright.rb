@@ -2,11 +2,11 @@ cask "upright" do
   version "0.1.1"
   sha256 "b1aae42bedf1c441e057fe4ec23c9d0cf9b84209c79a462aa1b828484d39efa9"   # auto-set by scripts/update-cask.sh
 
-  url "https://github.com/harshagv/upright/releases/download/v#{version}/Upright.zip",
-      verified: "github.com/harshagv/upright/"
+  url "https://github.com/harshagv/healthbar/releases/download/v#{version}/Upright.zip",
+      verified: "github.com/harshagv/healthbar/"
   name "Upright"
   desc "Menu-bar app that nudges you to sit up straight using AirPods motion sensors"
-  homepage "https://github.com/harshagv/upright"
+  homepage "https://github.com/harshagv/healthbar"
 
   depends_on macos: :sonoma   # macOS 14+ (symbol form means "this version or newer")
 

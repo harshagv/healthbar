@@ -29,8 +29,8 @@ From source (requires macOS 14+ and the Xcode Command Line Tools —
 `xcode-select --install`; a full Xcode install is not required):
 
 ```bash
-git clone https://github.com/harshagv/upright.git
-cd upright && make run
+git clone https://github.com/harshagv/healthbar.git
+cd healthbar && make run
 ```
 
 ## First run
@@ -81,9 +81,14 @@ Upright is distributed as a **Homebrew Cask** — a prebuilt `.app` that a GitHu
 Actions workflow compiles and attaches to each release, so end users never need
 Xcode or the Command Line Tools. Two GitHub repos are involved:
 
-- **`harshagv/upright`** — this repo (app source, the release workflow at
+- **`harshagv/healthbar`** — this repo (app source, the release workflow at
   [`.github/workflows/release.yml`](.github/workflows/release.yml), and a
   reference copy of the cask in [`Casks/upright.rb`](Casks/upright.rb)).
+  Pushing a `v*` tag builds **every app under `apps/`** and attaches a
+  `<App>.zip` and a `<App>.dmg` for each to the one release, so
+  [the releases page](https://github.com/harshagv/healthbar/releases) carries
+  installable bundles for Upright and MiniMe alike. Tag a single app with
+  `<app>-v<version>` (e.g. `minime-v0.1.0`) to release just that one.
 - **`harshagv/homebrew-tap`** — the tap that actually serves the cask.
   `brew install --cask harshagv/tap/upright` expands to *"clone repo
   `harshagv/homebrew-tap`, install `Casks/upright.rb`"* — Homebrew reads that
