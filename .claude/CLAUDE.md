@@ -149,7 +149,12 @@ deferral asks whether the camera is busy — MiniMe never captures video.
   - branch push, PR or manual run → every app, build only, nothing published
 - Matrix jobs append to the same release, which is what lets one `v*` tag put
   every app's bundles on a single release page.
-- Only **Upright** has a Homebrew cask; MiniMe ships as a release download only.
+- Both apps have a Homebrew cask (`Casks/upright.rb`, `Casks/minime.rb`). The
+  cask token is the app name lowercased and is independent of the repo name.
+- `scripts/update-cask.sh [App] [version]` fills in `version` + `sha256` from a
+  published release, so checksums are never hand-copied. It derives the tag the
+  same way CI does: `v<version>` for Upright, `<app>-v<version>` for everything
+  else.
 - Homebrew tap: shared repo `harshagv/homebrew-tap` → `Casks/upright.rb`
   (a reference copy lives at `Casks/upright.rb` here). End users need no Xcode.
 - Install: `brew install --cask harshagv/tap/upright`
