@@ -1,12 +1,12 @@
 #!/usr/bin/env swift
-// Generates Resources/AppIcon.icns — a green→teal squircle with a white
-// "figure.stand" SF Symbol (matching the good-upright menu-bar glyph).
+// Generates apps/Upright/Resources/AppIcon.icns — a green→teal squircle with a
+// white "figure.stand" SF Symbol (matching the good-upright menu-bar glyph).
 // Run from the project root:  swift scripts/make_icon.swift
 import AppKit
 import Foundation
 
 let symbolName = "figure.stand"
-let outIcns = "Resources/AppIcon.icns"
+let outIcns = "apps/Upright/Resources/AppIcon.icns"
 let iconsetDir = "/tmp/Upright-AppIcon.iconset"
 let previewPath = "/tmp/upright-icon-preview.png"
 

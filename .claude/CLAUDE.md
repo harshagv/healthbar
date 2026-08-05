@@ -1,20 +1,40 @@
 # Upright — Project Guide
 
-macOS menu-bar app that reads AirPods head-motion sensors (Apple Core Motion) to
-detect forward-head/slouching upright and nudges the user to sit up straight.
+A multi-app repo of macOS menu-bar agents. Each app lives under `apps/<Name>/`;
+build tooling, scripts and CI at the root are generic over the app name.
+
+- **Upright** — reads AirPods head-motion sensors (Apple Core Motion) to detect
+  forward-head/slouching posture and nudges the user to sit up straight.
+- **MiniMe** — hydration tracking and 60-minute eye breaks, fronted by a
+  pixel-art character. Personal use; not distributed.
+
+## Repo layout
+
+```
+apps/<Name>/Sources/              Swift sources (+ SwiftPM resources)
+apps/<Name>/Resources/            Info.plist (required), AppIcon.icns (optional)
+apps/<Name>/<Name>.entitlements   optional, Developer ID builds only
+apps/<Name>/Art/                  master art that is processed, not shipped
+```
+
+Adding an app = a directory in that shape + a target and product in
+`Package.swift`. Nothing else needs to change.
 
 ## Commands
 
-- `make run` — build the `.app` bundle and launch it
-- `./build.sh [release|debug]` — build + assemble + ad-hoc sign the bundle
+- `make run APP=MiniMe` — build the `.app` bundle and launch it (`APP` defaults
+  to `Upright`); `make minime` is shorthand
+- `./build.sh [release|debug] [AppName]` — build + assemble + ad-hoc sign
 - `make install` / `make uninstall` — copy to / remove from `/Applications`
-- `make clean` — remove `.build`
-- `swift scripts/make_icon.swift` — regenerate `Resources/AppIcon.icns`
+- `make clean` — remove `.build` (shared by all apps)
+- `swift scripts/make_icon.swift` — regenerate `apps/Upright/Resources/AppIcon.icns`
+- `swift scripts/slice_sprites.swift "$PWD"` — regenerate MiniMe's sprite frames
+  from `apps/MiniMe/Art/source.png`
 
-Requirements: macOS 14+, Xcode (Swift 5.9+). Real testing needs AirPods
-Pro/3/Max or Beats Fit Pro.
+Requirements: macOS 14+, Xcode or Command Line Tools (Swift 5.9+). Real Upright
+testing needs AirPods Pro/3/Max or Beats Fit Pro.
 
-## Architecture (`Sources/Upright/`)
+## Architecture (`apps/Upright/Sources/`)
 
 - `UprightApp.swift` — `@main` App shell; installs `AppDelegate` via
   `NSApplicationDelegateAdaptor` and exposes only an empty `Settings` scene.
@@ -42,10 +62,32 @@ Pro/3/Max or Beats Fit Pro.
 - `MenuContentView.swift` — SwiftUI menu UI: status, live meter, session stats +
   chart, collapsible History and Settings.
 
-Other: `Resources/Info.plist` (bundle id `com.upright.app`, `LSUIElement`,
-`NSMotionUsageDescription`, version), `Resources/AppIcon.icns` (generated),
-`Upright.entitlements` (headphone-motion — Developer ID builds ONLY, never
-ad-hoc), `build.sh` / `Makefile` (bundle assembly + signing).
+Other: `apps/Upright/Resources/Info.plist` (bundle id `com.upright.app`,
+`LSUIElement`, `NSMotionUsageDescription`, version),
+`apps/Upright/Resources/AppIcon.icns` (generated),
+`apps/Upright/Upright.entitlements` (headphone-motion — Developer ID builds
+ONLY, never ad-hoc), `build.sh` / `Makefile` (bundle assembly + signing).
+
+## Architecture (`apps/MiniMe/Sources/`)
+
+- `MiniMeApp.swift` / `AppDelegate.swift` — same agent shell as Upright: status
+  item, lazily built `NSPopover`, `popoverIsOpen` gating.
+- `AppState.swift` — settings (UserDefaults via `didSet`), today's hydration,
+  and a 60-second tick that catches local-midnight rollover. The menu-bar glyph
+  is driven by `menuBarStep` (progress quantised to 25% steps) so logging a
+  glass redraws the status item at most four times a day.
+- `HydrationTracker.swift` — pure pacing maths. Pro-rata against the active
+  window, so MiniMe talks in deficits ("800 ml behind") not remainders.
+- `HistoryStore.swift` — per-day `DayStat` (water, breaks taken/skipped, the
+  goal in force that day) in UserDefaults JSON, pruned to 90 days; streaks.
+- `SpriteLibrary.swift` — loads pixel-art frames from `Bundle.module`; warns on
+  stderr if the resource bundle is missing rather than rendering nothing.
+- `SpriteAnimationView.swift` — frame player; `.interpolation(.none)` keeps the
+  pixels crisp when scaled.
+- `StatusGlyph.swift` — hand-drawn template ring for the menu bar.
+
+Bundle id `com.minime.app`. `NSCameraUsageDescription` is present because break
+deferral asks whether the camera is busy — MiniMe never captures video.
 
 ## How detection works
 
@@ -81,20 +123,35 @@ ad-hoc), `build.sh` / `Makefile` (bundle assembly + signing).
 - **Homebrew source build** uses `swift build --disable-sandbox` (SwiftPM's
   nested sandbox fails inside Homebrew's sandbox). Keep that flag in `build.sh`.
 - **No AirPods haptics API** — nudges are sound/voice/notification only.
+- **Resource bundles are per-app.** SwiftPM drops `<Package>_<Target>.bundle`
+  into a bin directory *shared by every product*, so `build.sh` copies only
+  `*_<AppName>.bundle`. A bare `*.bundle` glob staples one app's resources into
+  another's bundle (Upright shipped MiniMe's sprites this way once).
+- **`Bundle.module` needs the bundle inside `Contents/Resources`** — it compiles
+  fine without it and traps at runtime in the assembled app. `SpriteLibrary`
+  warns on stderr instead of silently rendering nothing.
+- **Personal Voice works ad-hoc.** `AVSpeechSynthesizer.requestPersonalVoiceAuthorization()`
+  returns `.authorized` from an ad-hoc signed bundle — no Developer ID and no
+  entitlement, so it avoids the AMFI trap above. Verified on macOS 26.5.1.
 
 ## Distribution
 
-- Main repo: `harshagv/upright` (public, MIT).
-- Distributed as a Homebrew **cask** of a prebuilt app. `.github/workflows/
-  release.yml` builds `Upright.app` on a macOS runner, zips it to `Upright.zip`,
-  and attaches it to the GitHub Release on every `v*` tag.
+- Main repo: `harshagv/upright` (public, MIT). Only **Upright** is distributed;
+  MiniMe is personal-use and has no cask.
+- Distributed as a Homebrew **cask** of a prebuilt app.
+  `.github/workflows/release.yml` discovers apps from `apps/`, builds each on a
+  macOS runner via a matrix, zips to `<App>.zip`, and attaches to the GitHub
+  Release on tag pushes. Tag routing:
+  - `v1.2.3` → Upright only (legacy shape, keeps the cask flow working)
+  - `minime-v0.1.0` / `<app>-v*` → that app only
+  - branch push, PR or manual run → every app, build only, nothing published
 - Homebrew tap: shared repo `harshagv/homebrew-tap` → `Casks/upright.rb`
   (a reference copy lives at `Casks/upright.rb` here). End users need no Xcode.
 - Install: `brew install --cask harshagv/tap/upright`
 
 ### Cutting a release
 
-1. Bump `Resources/Info.plist` `CFBundleShortVersionString` (+ `CFBundleVersion`).
+1. Bump `apps/Upright/Resources/Info.plist` `CFBundleShortVersionString` (+ `CFBundleVersion`).
 2. Commit + push `main`.
 3. `git tag vX.Y.Z && git push origin vX.Y.Z` ; `gh release create vX.Y.Z`
    (the Release workflow builds + uploads `Upright.zip`).

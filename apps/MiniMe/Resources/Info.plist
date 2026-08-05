@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleName</key>
+    <string>MiniMe</string>
+    <key>CFBundleDisplayName</key>
+    <string>MiniMe</string>
+    <key>CFBundleIdentifier</key>
+    <string>com.minime.app</string>
+    <key>CFBundleExecutable</key>
+    <string>MiniMe</string>
+    <key>CFBundleIconFile</key>
+    <string>AppIcon</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>CFBundleShortVersionString</key>
+    <string>0.1.0</string>
+    <key>CFBundleVersion</key>
+    <string>1</string>
+    <key>LSMinimumSystemVersion</key>
+    <string>14.0</string>
+    <key>LSUIElement</key>
+    <true/>
+    <key>NSHumanReadableCopyright</key>
+    <string>MiniMe</string>
+    <!-- MiniMe never captures video. It only asks whether the camera is already
+         busy, so a break never dims your screen in the middle of a call. -->
+    <key>NSCameraUsageDescription</key>
+    <string>MiniMe checks whether your camera is in use so it can postpone a break instead of interrupting a call. It never records video.</string>
+</dict>
+</plist>

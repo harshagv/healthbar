@@ -103,7 +103,7 @@ git add Casks/upright.rb && git commit -m "Add upright cask" && git push -u orig
 
 ### Cutting a release
 
-1. Bump the version in `Resources/Info.plist` (`CFBundleShortVersionString` and
+1. Bump the version in `apps/Upright/Resources/Info.plist` (`CFBundleShortVersionString` and
    `CFBundleVersion`), then commit and push `main`.
 2. Tag and push — this fires the **Release** workflow, which builds
    `Upright.app`, zips it to `Upright.zip`, and **creates the GitHub release**

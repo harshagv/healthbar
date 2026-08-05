@@ -39,21 +39,40 @@ development.
 
 ## Project layout
 
+This repo holds more than one menu-bar app. Each lives under `apps/<Name>/` with
+the same shape, and everything shared sits at the root.
+
 ```
-Sources/Upright/
-  UprightApp.swift          # @main, MenuBarExtra scene
-  AppState.swift               # view-model: wires motion → analysis → alerts
-  HeadphoneMotionService.swift # CMHeadphoneMotionManager wrapper
-  UprightAnalyzer.swift        # baseline, filtering, slouch detection
-  AlertManager.swift           # sound + voice + notification
-  AudioDeviceMonitor.swift     # CoreAudio output-device (AirPods) detection
-  HistoryStore.swift           # persistent per-day upright history
-  MenuContentView.swift        # SwiftUI menu UI (status, stats, history, settings)
-Resources/Info.plist           # bundle id, LSUIElement, NSMotionUsageDescription
-Resources/AppIcon.icns         # generated app icon
-scripts/make_icon.swift        # regenerates Resources/AppIcon.icns
-build.sh / Makefile            # assemble + sign the .app
+apps/Upright/
+  Sources/
+    UprightApp.swift             # @main, MenuBarExtra scene
+    AppState.swift               # view-model: wires motion → analysis → alerts
+    HeadphoneMotionService.swift # CMHeadphoneMotionManager wrapper
+    UprightAnalyzer.swift        # baseline, filtering, slouch detection
+    AlertManager.swift           # sound + voice + notification
+    AudioDeviceMonitor.swift     # CoreAudio output-device (AirPods) detection
+    HistoryStore.swift           # persistent per-day upright history
+    MenuContentView.swift        # SwiftUI menu UI (status, stats, history, settings)
+  Resources/Info.plist           # bundle id, LSUIElement, NSMotionUsageDescription
+  Resources/AppIcon.icns         # generated app icon
+  Upright.entitlements           # headphone-motion — Developer ID builds ONLY
+
+apps/MiniMe/
+  Sources/                       # hydration + eye-break assistant
+  Sources/Sprites/               # generated pixel-art frames (SwiftPM resource)
+  Resources/Info.plist
+  Art/source.png                 # master sprite sheet, processed not shipped
+
+Package.swift                    # one executable target per app
+build.sh / Makefile              # assemble + sign any app: ./build.sh release <App>
+scripts/make_icon.swift          # regenerates apps/Upright/Resources/AppIcon.icns
+scripts/slice_sprites.swift      # regenerates apps/MiniMe/Sources/Sprites/
+scripts/update-cask.sh           # syncs Casks/upright.rb to a published release
 ```
+
+Adding an app means creating `apps/<Name>/` with that layout and adding a target
+plus product to `Package.swift`. `build.sh`, the `Makefile` and CI are all
+generic over the app name and need no changes.
 
 Upright is distributed as a Homebrew **cask** of a prebuilt app built by
 [`.github/workflows/release.yml`](.github/workflows/release.yml). The cask lives

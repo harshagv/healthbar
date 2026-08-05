@@ -19,7 +19,7 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 CASK="Casks/upright.rb"
 
-VERSION="${1:-$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' Resources/Info.plist)}"
+VERSION="${1:-$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' apps/Upright/Resources/Info.plist)}"
 URL="https://github.com/${REPO}/releases/download/v${VERSION}/Upright.zip"
 
 echo "› Fetching $URL"
