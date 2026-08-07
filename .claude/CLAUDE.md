@@ -28,8 +28,12 @@ Adding an app = a directory in that shape + a target and product in
 - `make install` / `make uninstall` — copy to / remove from `/Applications`
 - `make clean` — remove `.build` (shared by all apps)
 - `swift scripts/make_icon.swift` — regenerate `apps/Upright/Resources/AppIcon.icns`
-- `swift scripts/slice_sprites.swift "$PWD"` — regenerate MiniMe's sprite frames
-  from `apps/MiniMe/Art/source.png`
+- `swift scripts/make_cheer_sprite.swift "$PWD" [scale]` — rebuild the full-body
+  `cheer_*` frames by compositing `wave` onto `idle`'s legs. Run it *after*
+  `slice_sprites.swift`; it consumes that script's output, not the sheet.
+- `swift scripts/slice_sprites.swift "$PWD" [sourceFile]` — regenerate MiniMe's
+  sprite frames (defaults to `source_adobe.png`; keys off alpha when the sheet
+  has one, otherwise flood-fills from the edges)
 
 Requirements: macOS 14+, Xcode or Command Line Tools (Swift 5.9+). Real Upright
 testing needs AirPods Pro/3/Max or Beats Fit Pro.

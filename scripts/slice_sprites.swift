@@ -1,32 +1,33 @@
 import AppKit
 import CoreGraphics
 
-// Slices apps/MiniMe/Art/source.png (a hand-made reference sheet with labels,
-// dividers and a palette strip) into individual transparent PNGs in
-// apps/MiniMe/Sources/Sprites/, where SwiftPM can package them.
+// Slices a reference sheet in apps/MiniMe/Art/ into individual transparent
+// PNGs in apps/MiniMe/Sources/Sprites/, where SwiftPM can package them.
 //
-// Run:  swift scripts/slice_sprites.swift "$PWD"
+// Run:  swift scripts/slice_sprites.swift "$PWD" [sourceFile]
 //
-// Two things make this more than a grid slice:
-//   • The sheet has no alpha. Background is found by flood-filling inward from
-//     the edges, so the character's own near-black hair and navy jacket stay
-//     opaque — a luminance threshold would punch holes straight through them.
-//   • Cells are not uniform, and each section carries caption text above (and,
+// Three things make this more than a grid slice:
+//   • Backgrounds come in two flavours. A sheet exported with alpha is keyed
+//     straight off the alpha channel; a flat one is keyed by flood-filling
+//     inward from the edges, so the character's own near-black hair and navy
+//     jacket stay opaque — a luminance threshold would punch holes through
+//     them. Which path is used is detected, not configured.
+//   • Cells are not uniform, and some sheets carry caption text above (and,
 //     for expressions, below) the art. Within a cell we keep only the tallest
 //     run of content rows, which is the character and never the caption.
-//
-// Frames in an animation share one y-range and one canvas width so the feet
-// stay planted; trimming each frame tightly would make the walk cycle jitter.
+//   • Frames in an animation share one y-range and one canvas width so the feet
+//     stay planted; trimming each frame tightly would make the walk cycle jitter.
 
 // Repo root as argv[1]. `swift -interpret` neither reports an absolute
 // #filePath nor runs with the repo as its working directory, so neither can be
 // relied on to find the sheet.
 //   swift scripts/slice_sprites.swift "$PWD"
 guard CommandLine.arguments.count > 1 else {
-    fatalError("usage: swift scripts/slice_sprites.swift <repo-root>")
+    fatalError("usage: swift scripts/slice_sprites.swift <repo-root> [sourceFile]")
 }
 let root = CommandLine.arguments[1]
-let sourcePath = "\(root)/apps/MiniMe/Art/source.png"
+let sourceFile = CommandLine.arguments.count > 2 ? CommandLine.arguments[2] : "source_adobe.png"
+let sourcePath = "\(root)/apps/MiniMe/Art/\(sourceFile)"
 let outDir = "\(root)/apps/MiniMe/Sources/Sprites"
 
 guard let img = NSImage(contentsOfFile: sourcePath),
@@ -50,27 +51,44 @@ ctx.draw(cg, in: CGRect(x: 0, y: 0, width: w, height: h))
 
 // MARK: Background mask
 
-let bg = rgb(0, 0)
-let tolerance = 40
+@inline(__always) func alpha(_ x: Int, _ y: Int) -> Int { Int(buf[(y * w + x) * 4 + 3]) }
 
 var isBG = [Bool](repeating: false, count: w * h)
-var stack: [Int] = []
 
-func flood(_ x: Int, _ y: Int) {
-    guard x >= 0, y >= 0, x < w, y < h else { return }
-    let i = y * w + x
-    if isBG[i] { return }
-    let p = rgb(x, y)
-    guard abs(p.0 - bg.0) + abs(p.1 - bg.1) + abs(p.2 - bg.2) <= tolerance else { return }
-    isBG[i] = true
-    stack.append(i)
-}
+// A sheet exported with a real transparent background needs no flood fill —
+// and mustn't get one, since the fill would also eat any legitimately
+// background-coloured pixel it can reach from an edge.
+let transparentPixels = (0..<(w * h)).reduce(0) { $0 + (Int(buf[$1 * 4 + 3]) < 250 ? 1 : 0) }
+let hasRealAlpha = transparentPixels > (w * h) / 20      // >5% of the sheet
 
-for x in 0..<w { flood(x, 0); flood(x, h - 1) }
-for y in 0..<h { flood(0, y); flood(w - 1, y) }
-while let i = stack.popLast() {
-    let x = i % w, y = i / w
-    flood(x - 1, y); flood(x + 1, y); flood(x, y - 1); flood(x, y + 1)
+if hasRealAlpha {
+    print("Background: alpha channel (\(transparentPixels * 100 / (w * h))% transparent)")
+    let cutoff = 24                                       // keep soft edges
+    for i in 0..<(w * h) where Int(buf[i * 4 + 3]) < cutoff {
+        isBG[i] = true
+    }
+} else {
+    print("Background: flood fill from the edges (sheet is opaque)")
+    let bg = rgb(0, 0)
+    let tolerance = 40
+    var stack: [Int] = []
+
+    func flood(_ x: Int, _ y: Int) {
+        guard x >= 0, y >= 0, x < w, y < h else { return }
+        let i = y * w + x
+        if isBG[i] { return }
+        let p = rgb(x, y)
+        guard abs(p.0 - bg.0) + abs(p.1 - bg.1) + abs(p.2 - bg.2) <= tolerance else { return }
+        isBG[i] = true
+        stack.append(i)
+    }
+
+    for x in 0..<w { flood(x, 0); flood(x, h - 1) }
+    for y in 0..<h { flood(0, y); flood(w - 1, y) }
+    while let i = stack.popLast() {
+        let x = i % w, y = i / w
+        flood(x - 1, y); flood(x + 1, y); flood(x, y - 1); flood(x, y + 1)
+    }
 }
 
 @inline(__always) func isContent(_ x: Int, _ y: Int) -> Bool { !isBG[y * w + x] }
@@ -189,7 +207,12 @@ func writePNG(_ cell: Cell, canvasWidth: Int) {
             let si = (sy * w + sx) * 4
             let di = (y * cw + (x + xPad)) * 4
             out[di] = buf[si]; out[di + 1] = buf[si + 1]
-            out[di + 2] = buf[si + 2]; out[di + 3] = 255
+            out[di + 2] = buf[si + 2]
+            // Carry the source alpha through when the sheet has one, so
+            // anti-aliased edges stay soft instead of turning into a hard
+            // 1px fringe. Both buffers are premultiplied, so RGB needs no
+            // adjustment alongside it.
+            out[di + 3] = hasRealAlpha ? buf[si + 3] : 255
         }
     }
 

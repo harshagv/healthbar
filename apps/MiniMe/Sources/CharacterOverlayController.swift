@@ -92,7 +92,7 @@ final class CharacterOverlayController {
         self.actions = []
         panel?.ignoresMouseEvents = true
         phase = .speaking
-        render(frames: standingFrames, facingLeft: true, loops: true, bubble: true, celebrating: true)
+        render(frames: cheerFrames, facingLeft: true, loops: true, bubble: true, celebrating: true)
 
         timeoutTimer = Timer.scheduledTimer(withTimeInterval: duration, repeats: false) { [weak self] _ in
             self?.dismiss()
@@ -193,6 +193,12 @@ final class CharacterOverlayController {
     private var standingFrames: [NSImage] {
         if let idle = sprites.idle { return [idle] }
         return sprites.walk
+    }
+
+    /// Arm pumping up and down for the victory lap. Falls back to standing if
+    /// the composited frames haven't been generated.
+    private var cheerFrames: [NSImage] {
+        sprites.cheer.isEmpty ? standingFrames : sprites.cheer
     }
 
     private func hide() {

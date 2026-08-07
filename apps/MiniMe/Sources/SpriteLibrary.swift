@@ -14,8 +14,13 @@ final class SpriteLibrary {
     let walk: [NSImage]
     /// 3-frame entrance with motion streaks — the bottom-right arrival.
     let entrance: [NSImage]
-    /// 4-frame wave: arm up, hold, down.
+    /// 4-frame wave: arm up, hold, down. Cropped at the thigh — usable as a
+    /// close-up, never as a standing pose.
     let wave: [NSImage]
+    /// Full-body arm-raised frames, composited from `wave` + `idle` by
+    /// `scripts/make_cheer_sprite.swift`. These are what the celebration uses,
+    /// because `wave` alone would render a legless character.
+    let cheer: [NSImage]
     let idle: NSImage?
 
     let glassesOn: NSImage?
@@ -34,6 +39,7 @@ final class SpriteLibrary {
         walk     = SpriteLibrary.sequence(prefix: "walk", count: 8)
         entrance = SpriteLibrary.sequence(prefix: "entrance", count: 3)
         wave     = SpriteLibrary.sequence(prefix: "wave", count: 4)
+        cheer    = SpriteLibrary.sequence(prefix: "cheer", count: 2)
         idle     = SpriteLibrary.load("idle")
 
         glassesOn  = SpriteLibrary.load("glasses_on")

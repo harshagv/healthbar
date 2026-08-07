@@ -42,7 +42,9 @@ struct CharacterOverlayView: View {
         // is pinned to the bottom and the bubble floats above his head, so
         // showing or hiding it never moves him.
         ZStack(alignment: .bottom) {
-            SpriteAnimationView(frames: frames, fps: 12, loops: loops)
+            // The cheer is two frames — at walking speed it reads as a flicker
+            // rather than an arm going up and down, so slow it right down.
+            SpriteAnimationView(frames: frames, fps: celebrating ? 5 : 12, loops: loops)
                 .frame(height: characterHeight)
                 // Sprites are drawn walking to the right; flip to walk left.
                 .scaleEffect(x: facingLeft ? -1 : 1, y: 1)
