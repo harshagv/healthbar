@@ -28,6 +28,13 @@ on:
 permissions:
   contents: write   # required to upload assets to the release
 
+# macOS runners bill at 10x, so don't leave superseded builds running. Tags are
+# exempt: cancelling a release build half way would leave a release with only
+# some of its apps attached.
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+
 jobs:
   discover:
     name: Discover apps
@@ -151,6 +158,38 @@ jobs:
           ZIP_SHA="$(shasum -a 256 "${APP_NAME}.zip" | awk '{print $1}')"
           DMG_SHA="$(shasum -a 256 "${APP_NAME}.dmg" | awk '{print $1}')"
           echo "sha256=$ZIP_SHA" >> "$GITHUB_OUTPUT"
+          SHORT_SHA="$(git rev-parse --short HEAD)"
+          echo "short_sha=$SHORT_SHA" >> "$GITHUB_OUTPUT"
+
+          # These builds are ad-hoc signed (no Developer ID), and anything
+          # downloaded from GitHub arrives quarantined. That combination makes
+          # macOS report the app as "damaged" — the least informative error it
+          # has. Ship the fix next to the bundle so whoever downloads the
+          # artifact finds it without hunting through the README.
+          cat > INSTALL.txt <<EOF
+          ${APP_NAME} ${VERSION} (${SHORT_SHA})
+
+          Two ways in:
+            • ${APP_NAME}.dmg — open it, drag ${APP_NAME} to Applications
+            • ${APP_NAME}.zip — unzip and move ${APP_NAME}.app to /Applications
+
+          FIRST LAUNCH
+          This build is ad-hoc signed (no paid Apple Developer ID), so macOS
+          may say it is "damaged and can't be opened". It is not damaged — that
+          is Gatekeeper refusing an unsigned app that carries the quarantine
+          flag set on every browser download. Clear it once:
+
+            xattr -dr com.apple.quarantine "/Applications/${APP_NAME}.app"
+
+          Then open ${APP_NAME} from Launchpad or Spotlight. It is a menu-bar
+          agent: it has no Dock icon and no window, look for it in the menu bar.
+
+          Requires macOS 14 or newer, Apple Silicon.
+
+          sha256  ${APP_NAME}.zip  ${ZIP_SHA}
+          sha256  ${APP_NAME}.dmg  ${DMG_SHA}
+          EOF
+
           {
             echo "### ${APP_NAME} ${VERSION}"
             echo ""
@@ -158,15 +197,29 @@ jobs:
             echo "| --- | --- |"
             echo "| \`${APP_NAME}.zip\` | \`${ZIP_SHA}\` |"
             echo "| \`${APP_NAME}.dmg\` | \`${DMG_SHA}\` |"
+            echo ""
+            echo "Download **${APP_NAME}-${VERSION}** from the Artifacts section of this run."
+            echo "Ad-hoc signed, so clear the quarantine flag once after installing:"
+            echo ""
+            echo '```bash'
+            echo "xattr -dr com.apple.quarantine \"/Applications/${APP_NAME}.app\""
+            echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload build artifacts (every run)
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.app }}-bundles
+          # Version + commit in the name so downloads from different runs can
+          # be told apart once they're sitting in ~/Downloads.
+          name: ${{ matrix.app }}-${{ steps.package.outputs.version }}-${{ steps.package.outputs.short_sha }}
           path: |
             ${{ matrix.app }}.zip
             ${{ matrix.app }}.dmg
+            INSTALL.txt
+          # Default is `warn`, which would let a silent packaging failure pass
+          # as a green run with an empty artifact.
+          if-no-files-found: error
+          retention-days: 90
 
       - name: Attach to GitHub Release (tag pushes only)
         if: startsWith(github.ref, 'refs/tags/')
