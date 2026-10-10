@@ -1,20 +1,33 @@
 name: Build & Release
 
-# Builds every app in apps/ on a macOS runner and, for tag pushes, attaches an
-# installable bundle for each to the GitHub Release.
+# Builds every app in apps/ on a macOS runner, uploads each as a downloadable
+# artifact, and publishes a GitHub Release when asked to.
 #
 # Apps are discovered from the apps/ directory, so a new app needs a directory
 # and a Package.swift target — not a change to this file.
 #
-# Tag routing:
-#   v1.2.3           → every app, published together in one release
-#   minime-v0.1.0    → that app alone (matched case-insensitively)
-#   <app>-v<version> → likewise
-#   push / PR / manual run → every app, build only, nothing published
+# HOW A RELEASE IS TRIGGERED
+#   [release]        in a commit message on main → patch bump, every app
+#   [release:minor]  likewise, minor bump
+#   [release:major]  likewise, major bump
+#   workflow_dispatch with publish=true          → chosen bump, chosen app
+#   v1.2.3 tag pushed by hand                    → every app at that exact version
+#   minime-v0.1.0 tag pushed by hand             → that app at that exact version
+#   anything else (plain push, PR)               → build + artifacts only
 #
-# Each app ships twice:
+# VERSIONING
+# The latest git tag is the source of truth for what was last released, not
+# Info.plist — a tag cannot drift from the release it names. The next version is
+# that tag incremented, stamped into Info.plist at build time so the shipped
+# bundle agrees with its tag, then committed back to main so the repo agrees
+# too. Each app is versioned and tagged independently:
+#   Upright → v<version>            (the Homebrew cask's URL depends on this)
+#   others  → <app>-v<version>
+#
+# Each app ships twice, plus install notes:
 #   <App>.zip  — stable filename, this is what the Homebrew cask downloads
-#   <App>.dmg  — drag-to-Applications installer for people not using Homebrew
+#   <App>.dmg  — drag-to-Applications installer
+#   INSTALL.txt — including the Gatekeeper un-quarantine step
 on:
   push:
     branches: [main]
@@ -24,28 +37,44 @@ on:
   pull_request:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      publish:
+        description: "Publish a GitHub Release (otherwise build only)"
+        type: boolean
+        default: false
+      bump:
+        description: "Which part of the version to increment"
+        type: choice
+        options: [patch, minor, major]
+        default: patch
+      app:
+        description: "App to release, or 'all'"
+        type: string
+        default: all
 
 permissions:
-  contents: write   # required to upload assets to the release
+  contents: write   # create tags, releases, and the version-bump commit
 
-# macOS runners bill at 10x, so don't leave superseded builds running. Tags are
-# exempt: cancelling a release build half way would leave a release with only
-# some of its apps attached.
+# macOS runners bill at 10x, so don't leave superseded builds running. Tags and
+# releases are exempt: cancelling half way would leave a release with only some
+# of its apps attached.
 concurrency:
   group: build-${{ github.ref }}
-  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') && !contains(github.event.head_commit.message, '[release') }}
 
 jobs:
-  discover:
-    name: Discover apps
+  plan:
+    name: Plan
     runs-on: ubuntu-latest
     outputs:
-      apps: ${{ steps.list.outputs.apps }}
+      apps: ${{ steps.plan.outputs.apps }}
+      mode: ${{ steps.plan.outputs.mode }}
+      bump: ${{ steps.plan.outputs.bump }}
     steps:
       - uses: actions/checkout@v4
 
-      - name: Work out which apps to build
-        id: list
+      - name: Work out what to build and whether to publish
+        id: plan
         run: |
           set -euo pipefail
           ALL="$(find apps -mindepth 1 -maxdepth 1 -type d -exec basename {} \; | sort)"
@@ -56,12 +85,16 @@ jobs:
           echo "Apps in repo:"; echo "$ALL" | sed 's/^/  /'
 
           SELECTED="$ALL"
+          # mode: none = build only | auto = compute next version | tag = use the pushed tag
+          MODE="none"
+          BUMP="patch"
+
           if [ "${GITHUB_REF_TYPE:-}" = "tag" ]; then
+            MODE="tag"
             TAG="${GITHUB_REF_NAME}"
             case "$TAG" in
               v*)
-                # A plain version tag releases the whole collection.
-                SELECTED="$ALL"
+                SELECTED="$ALL"   # a plain version tag releases the whole collection
                 ;;
               *-v*)
                 PREFIX="${TAG%%-v*}"
@@ -77,6 +110,31 @@ jobs:
                 ;;
             esac
             echo "Tag $TAG selects: $SELECTED"
+
+          elif [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ]; then
+            if [ "${{ inputs.publish }}" = "true" ]; then
+              MODE="auto"
+              BUMP="${{ inputs.bump }}"
+            fi
+            WANT="${{ inputs.app }}"
+            if [ -n "$WANT" ] && [ "$WANT" != "all" ]; then
+              SELECTED="$(echo "$ALL" | awk -v p="$WANT" 'tolower($0) == tolower(p)')"
+              if [ -z "$SELECTED" ]; then
+                echo "::error::input app='$WANT' names no app under apps/"
+                exit 1
+              fi
+            fi
+
+          elif [ "${GITHUB_EVENT_NAME}" = "push" ]; then
+            # Release flag in the commit message. Read from git rather than the
+            # event payload so it behaves the same for pushes of several commits.
+            MSG="$(git log -1 --pretty=%B)"
+            case "$MSG" in
+              *'[release:major]'*) MODE="auto"; BUMP="major" ;;
+              *'[release:minor]'*) MODE="auto"; BUMP="minor" ;;
+              *'[release]'*)       MODE="auto"; BUMP="patch" ;;
+            esac
+            [ "$MODE" = "auto" ] && echo "Release flag found in commit message → $BUMP bump"
           fi
 
           # Fail early on an app build.sh could never package.
@@ -90,23 +148,90 @@ jobs:
           fi
 
           JSON="$(echo "$SELECTED" | jq -R -s -c 'split("\n") | map(select(length > 0))')"
-          echo "apps=$JSON" >> "$GITHUB_OUTPUT"
-          echo "Matrix: $JSON"
+          {
+            echo "apps=$JSON"
+            echo "mode=$MODE"
+            echo "bump=$BUMP"
+          } >> "$GITHUB_OUTPUT"
+          echo "Matrix: $JSON   mode=$MODE   bump=$BUMP"
 
   build:
     name: Build ${{ matrix.app }}
-    needs: discover
+    needs: plan
     runs-on: macos-14   # Apple Silicon, macOS 14 — matches the apps' min OS
     strategy:
       fail-fast: false
+      # One app at a time when publishing: matrix jobs would otherwise race to
+      # create releases and push tags.
+      max-parallel: ${{ needs.plan.outputs.mode == 'none' && 4 || 1 }}
       matrix:
-        app: ${{ fromJSON(needs.discover.outputs.apps) }}
+        app: ${{ fromJSON(needs.plan.outputs.apps) }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          # Tags are the version source of truth, and a shallow clone has none.
+          fetch-depth: 0
 
       - name: Show toolchain
         run: swift --version && xcodebuild -version
+
+      - name: Resolve version
+        id: version
+        run: |
+          set -euo pipefail
+          APP_NAME="${{ matrix.app }}"
+          APP_LOWER="$(echo "$APP_NAME" | tr '[:upper:]' '[:lower:]')"
+          PLIST="apps/${APP_NAME}/Resources/Info.plist"
+          MODE="${{ needs.plan.outputs.mode }}"
+          BUMP="${{ needs.plan.outputs.bump }}"
+
+          # Upright keeps the bare v<version> scheme because the Homebrew cask's
+          # download URL is built from it; every other app is namespaced.
+          if [ "$APP_NAME" = "Upright" ]; then PREFIX="v"; else PREFIX="${APP_LOWER}-v"; fi
+
+          case "$MODE" in
+            tag)
+              # Version comes from the tag that triggered this run.
+              TAG="${GITHUB_REF_NAME}"
+              VERSION="${TAG##*v}"
+              ;;
+            auto)
+              LAST="$(git tag -l "${PREFIX}[0-9]*" | sed "s|^${PREFIX}||" | sort -V | tail -1)"
+              if [ -z "$LAST" ]; then
+                # Never released: ship what the plist already claims rather than
+                # inventing a version ahead of it.
+                VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$PLIST")"
+                echo "No ${PREFIX}* tag yet — first release at plist version $VERSION"
+              else
+                IFS=. read -r MA MI PA <<< "$LAST"
+                MA=${MA:-0}; MI=${MI:-0}; PA=${PA:-0}
+                case "$BUMP" in
+                  major) MA=$((MA + 1)); MI=0; PA=0 ;;
+                  minor) MI=$((MI + 1)); PA=0 ;;
+                  *)     PA=$((PA + 1)) ;;
+                esac
+                VERSION="${MA}.${MI}.${PA}"
+                echo "Last ${PREFIX}* tag was $LAST → $BUMP → $VERSION"
+              fi
+              TAG="${PREFIX}${VERSION}"
+              ;;
+            *)
+              VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$PLIST")"
+              TAG=""
+              ;;
+          esac
+
+          # Stamp it so the shipped bundle agrees with the tag naming it.
+          # CFBundleVersion uses the run number, which only ever increases.
+          /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $VERSION" "$PLIST"
+          /usr/libexec/PlistBuddy -c "Set :CFBundleVersion ${{ github.run_number }}" "$PLIST"
+
+          {
+            echo "version=$VERSION"
+            echo "tag=$TAG"
+          } >> "$GITHUB_OUTPUT"
+          echo "::notice::${APP_NAME} ${VERSION}${TAG:+ (tag $TAG)}"
 
       - name: Check app icon
         run: |
@@ -127,6 +252,7 @@ jobs:
         run: |
           set -euo pipefail
           APP_NAME="${{ matrix.app }}"
+          VERSION="${{ steps.version.outputs.version }}"
 
           # Locate the assembled bundle rather than guessing the arch subfolder
           # from `swift build --show-bin-path`, which can differ from where
@@ -138,10 +264,6 @@ jobs:
             exit 1
           fi
           echo "Found app bundle: $APP"
-
-          VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' \
-            "apps/${APP_NAME}/Resources/Info.plist" 2>/dev/null || echo "unknown")"
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
           # ditto preserves the bundle's symlinks/metadata better than `zip`.
           # The cask downloads this exact filename, so it must stay stable.
@@ -157,15 +279,17 @@ jobs:
 
           ZIP_SHA="$(shasum -a 256 "${APP_NAME}.zip" | awk '{print $1}')"
           DMG_SHA="$(shasum -a 256 "${APP_NAME}.dmg" | awk '{print $1}')"
-          echo "sha256=$ZIP_SHA" >> "$GITHUB_OUTPUT"
           SHORT_SHA="$(git rev-parse --short HEAD)"
-          echo "short_sha=$SHORT_SHA" >> "$GITHUB_OUTPUT"
+          {
+            echo "sha256=$ZIP_SHA"
+            echo "short_sha=$SHORT_SHA"
+          } >> "$GITHUB_OUTPUT"
 
           # These builds are ad-hoc signed (no Developer ID), and anything
           # downloaded from GitHub arrives quarantined. That combination makes
           # macOS report the app as "damaged" — the least informative error it
-          # has. Ship the fix next to the bundle so whoever downloads the
-          # artifact finds it without hunting through the README.
+          # has. Ship the fix next to the bundle so whoever downloads it finds
+          # it without hunting through the README.
           cat > INSTALL.txt <<EOF
           ${APP_NAME} ${VERSION} (${SHORT_SHA})
 
@@ -198,7 +322,6 @@ jobs:
             echo "| \`${APP_NAME}.zip\` | \`${ZIP_SHA}\` |"
             echo "| \`${APP_NAME}.dmg\` | \`${DMG_SHA}\` |"
             echo ""
-            echo "Download **${APP_NAME}-${VERSION}** from the Artifacts section of this run."
             echo "Ad-hoc signed, so clear the quarantine flag once after installing:"
             echo ""
             echo '```bash'
@@ -211,7 +334,7 @@ jobs:
         with:
           # Version + commit in the name so downloads from different runs can
           # be told apart once they're sitting in ~/Downloads.
-          name: ${{ matrix.app }}-${{ steps.package.outputs.version }}-${{ steps.package.outputs.short_sha }}
+          name: ${{ matrix.app }}-${{ steps.version.outputs.version }}-${{ steps.package.outputs.short_sha }}
           path: |
             ${{ matrix.app }}.zip
             ${{ matrix.app }}.dmg
@@ -221,13 +344,93 @@ jobs:
           if-no-files-found: error
           retention-days: 90
 
-      - name: Attach to GitHub Release (tag pushes only)
-        if: startsWith(github.ref, 'refs/tags/')
+      # Artifacts need a logged-in GitHub account to download, even on a public
+      # repo, and they expire. A release is the only way to hand someone a link
+      # that just works — so publishing is what makes these builds usable.
+      - name: Publish GitHub Release
+        if: needs.plan.outputs.mode != 'none'
         uses: softprops/action-gh-release@v2
         with:
-          # Matrix jobs append to the same release, so a `v*` tag ends up with
-          # every app's bundles on a single release page.
+          # On a tag push this is the tag that triggered the run; on an auto
+          # release it's computed, and the action creates the tag here.
+          tag_name: ${{ steps.version.outputs.tag || github.ref_name }}
+          target_commitish: ${{ github.sha }}
           files: |
             ${{ matrix.app }}.zip
             ${{ matrix.app }}.dmg
+            INSTALL.txt
           fail_on_unmatched_files: true
+          # A hand-pushed v* tag puts every app on one release, so each job
+          # appends its own section rather than overwriting the previous app's.
+          append_body: true
+          body: |
+            ### ${{ matrix.app }} ${{ steps.version.outputs.version }}
+
+            | Asset | What it's for |
+            | --- | --- |
+            | `${{ matrix.app }}.dmg` | Open, drag to Applications |
+            | `${{ matrix.app }}.zip` | Unzip, move to /Applications |
+
+            Ad-hoc signed (no paid Apple Developer ID), so macOS may call it
+            "damaged" on first launch. It isn't — that's Gatekeeper reacting to
+            the quarantine flag every download carries. Clear it once:
+
+            ```bash
+            xattr -dr com.apple.quarantine "/Applications/${{ matrix.app }}.app"
+            ```
+
+            Requires macOS 14 or newer, Apple Silicon.
+
+            `${{ matrix.app }}.zip` sha256: `${{ steps.package.outputs.sha256 }}`
+
+  # Record the released version back in the repo, so Info.plist and
+  # scripts/update-cask.sh agree with what actually shipped. Runs once, after
+  # every app has published, and reads each version from the tags that now
+  # exist rather than recomputing a bump (which would double-increment).
+  record-versions:
+    name: Commit version bump
+    needs: [plan, build]
+    if: needs.plan.outputs.mode == 'auto' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: main
+
+      - name: Write released versions into Info.plist
+        run: |
+          set -euo pipefail
+          git fetch --tags --force --quiet
+          CHANGED=0
+          for app in $(echo '${{ needs.plan.outputs.apps }}' | jq -r '.[]'); do
+            lower="$(echo "$app" | tr '[:upper:]' '[:lower:]')"
+            if [ "$app" = "Upright" ]; then prefix="v"; else prefix="${lower}-v"; fi
+            latest="$(git tag -l "${prefix}[0-9]*" | sed "s|^${prefix}||" | sort -V | tail -1)"
+            [ -z "$latest" ] && continue
+
+            plist="apps/${app}/Resources/Info.plist"
+            current="$(sed -n '/<key>CFBundleShortVersionString<\/key>/{n;s/.*<string>\(.*\)<\/string>.*/\1/p;}' "$plist")"
+            if [ "$current" != "$latest" ]; then
+              # No PlistBuddy on Linux; these plists are plain XML.
+              python3 - "$plist" "$latest" <<'PY'
+          import re, sys
+          path, version = sys.argv[1], sys.argv[2]
+          src = open(path).read()
+          src = re.sub(r'(<key>CFBundleShortVersionString</key>\s*<string>)[^<]*(</string>)',
+                       lambda m: m.group(1) + version + m.group(2), src, count=1)
+          open(path, 'w').write(src)
+          PY
+              echo "  $app: $current → $latest"
+              CHANGED=1
+            fi
+          done
+          echo "changed=$CHANGED" >> "$GITHUB_ENV"
+
+      - name: Commit
+        if: env.changed == '1'
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -am "chore: record released versions [skip ci]"
+          git push

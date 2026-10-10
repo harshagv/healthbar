@@ -165,18 +165,41 @@ deferral asks whether the camera is busy — MiniMe never captures video.
 
 ### Cutting a release
 
-1. Bump `apps/Upright/Resources/Info.plist` `CFBundleShortVersionString` (+ `CFBundleVersion`).
-2. Commit + push `main`.
-3. `git tag vX.Y.Z && git push origin vX.Y.Z` ; `gh release create vX.Y.Z`
-   (the Release workflow builds + uploads `Upright.zip`).
-4. Read the `sha256` from the workflow run Summary (or `shasum -a 256` the
-   uploaded `Upright.zip`).
-5. Update `version` + `sha256` in `Casks/upright.rb`, then copy it into
-   `harshagv/homebrew-tap` `Casks/upright.rb` and push the tap.
-6. Verify with `brew install --cask` / `brew upgrade --cask harshagv/tap/upright`.
+Normally: put `[release]` in the commit message and push to `main`. CI computes
+the next version, builds, tags and publishes. Nothing to bump by hand.
 
-Note: builds are ad-hoc signed (no Developer ID); Gatekeeper may warn on first
-launch — the cask caveats give the `xattr -dr com.apple.quarantine` fix.
+```bash
+git commit -m "feat: eye-break overlay [release]"   # patch bump
+git commit -m "feat: eye-break overlay [release:minor]"
+git commit -m "feat!: new storage format [release:major]"
+```
+
+Also available: **Actions → Build & Release → Run workflow** with
+`publish=true`, a bump level, and an app name (or `all`) — the same thing
+without a commit. Hand-pushed `vX.Y.Z` / `<app>-vX.Y.Z` tags still work and
+release at exactly that version.
+
+**Versions come from git tags, not Info.plist.** The latest tag matching the
+app's scheme is incremented, stamped into Info.plist at build time so the
+bundle agrees with its tag, then committed back to `main` by the
+`record-versions` job (`[skip ci]`, so it doesn't loop). An app with no tag yet
+releases at whatever its plist already says, rather than inventing a version
+ahead of it. `CFBundleVersion` is set to the workflow run number.
+
+Careless trigger: `[release]` matches **anywhere** in the message, so a commit
+that merely mentions it in prose will publish.
+
+Afterwards, sync the cask: `TAP_DIR=~/Documents/homebrew-tap scripts/update-cask.sh [App]`
+reads the version from Info.plist (now current) and fills in the `sha256`.
+
+Note: builds are ad-hoc signed (no Developer ID); Gatekeeper reports downloads
+as "damaged" until quarantine is cleared. The release body, the bundled
+`INSTALL.txt` and the cask caveats all give the `xattr -dr com.apple.quarantine`
+fix.
+
+**Artifacts are not a distribution channel.** GitHub Actions artifacts return
+401 to anyone not logged in — even on a public repo — and expire after 90 days.
+Only release assets are publicly downloadable.
 
 ## Testing
 
